@@ -1,8 +1,3 @@
-// 泛型函数测试
-fn print<T>(value: T) {
-    println(value);
-}
-
 // 泛型结构体测试
 struct Box<T> {
     value: T,
@@ -11,10 +6,6 @@ struct Box<T> {
 // 泛型类测试
 class Container<T> {
     value: T,
-    
-    fn get() -> T {
-        return value;
-    }
 }
 
 // 多参数泛型测试
@@ -24,10 +15,6 @@ struct Pair<T, U> {
 }
 
 fn main() {
-    // 测试泛型函数
-    print<int>(42);
-    print<string>("hello");
-    
     // 测试泛型结构体
     Box<int> box = Box<int> { value: 42 };
     println(box.value);
