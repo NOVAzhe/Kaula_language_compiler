@@ -291,10 +291,9 @@ int db_errcode(DBConnection* db) {
     return 0;
 }
 
-DBResult* db_query(DBConnection* db, const char* sql, ...) {
+DBResult* db_query(DBConnection* db, const char* sql) {
     DBResult* result;
     DBStatement* stmt;
-    va_list ap;
     int col_count;
     int row_count = 0;
     int row_cap = DB_INITIAL_CAPACITY;

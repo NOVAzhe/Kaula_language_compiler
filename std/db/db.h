@@ -60,7 +60,7 @@ int db_changes(DBConnection* db);
 const char* db_errmsg(DBConnection* db);
 int db_errcode(DBConnection* db);
 
-DBResult* db_query(DBConnection* db, const char* sql, ...);
+extern DBResult* db_query(DBConnection* db, const char* sql);
 void db_result_free(DBResult* result);
 int db_result_rows(DBResult* result);
 int db_result_cols(DBResult* result);

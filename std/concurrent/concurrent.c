@@ -831,7 +831,9 @@ static void* future_map_worker(void* arg) {
 Future* future_map(Future* input, void* (*func)(void*)) {
     if (!input || !func) return NULL;
     Promise* output = promise_create();
+    if (!output) return NULL;
     MapTaskArg* mta = (MapTaskArg*)kmm_v4_malloc(sizeof(MapTaskArg));
+    if (!mta) return NULL;
     mta->input = input;
     mta->func = func;
     mta->output = output;
@@ -868,11 +870,14 @@ static void* all_worker(void* arg) {
 Future* future_all(Future** futures, size_t count) {
     if (!futures || count == 0) return NULL;
     Promise* output = promise_create();
+    if (!output) return NULL;
     AllTaskArg* ata = (AllTaskArg*)kmm_v4_calloc(1, sizeof(AllTaskArg));
+    if (!ata) return NULL;
     ata->futures = futures;
     ata->count = count;
     ata->output = output;
     ata->results = (void**)kmm_v4_calloc(count, sizeof(void*));
+    if (!ata->results) return NULL;
     ata->mutex = mutex_create();
     for (size_t i = 0; i < count; i++) {
         thread_detach(thread_create(all_worker, ata));
@@ -880,24 +885,43 @@ Future* future_all(Future** futures, size_t count) {
     return output->future;
 }
 
+typedef struct { Future** futures; size_t count; Promise* output; Mutex mutex; bool_t done; } AnyArg;
+
+static void* future_any_worker(void* arg) {
+    typedef struct { AnyArg* aa; size_t idx; } WorkerArg;
+    WorkerArg* wa = (WorkerArg*)arg;
+    void* result = future_get(wa->aa->futures[wa->idx]);
+    mutex_lock(wa->aa->mutex);
+    if (!wa->aa->done) {
+        wa->aa->done = true;
+        promise_set_result(wa->aa->output, result);
+    }
+    mutex_unlock(wa->aa->mutex);
+    return NULL;
+}
+
 Future* future_any(Future** futures, size_t count) {
     if (!futures || count == 0) return NULL;
     Promise* output = promise_create();
-    typedef struct { Future** futures; size_t count; Promise* output; Mutex mutex; bool_t done; } AnyArg;
+    if (!output) return NULL;
     AnyArg* aa = (AnyArg*)kmm_v4_calloc(1, sizeof(AnyArg));
+    if (!aa) return NULL;
     aa->futures = futures;
     aa->count = count;
     aa->output = output;
     aa->mutex = mutex_create();
     typedef struct { AnyArg* aa; size_t idx; } WorkerArg;
     WorkerArg* args = (WorkerArg*)kmm_v4_malloc(count * sizeof(WorkerArg));
+    if (!args) return NULL;
     for (size_t i = 0; i < count; i++) {
         args[i].aa = aa;
         args[i].idx = i;
         typedef void* (*Func)(void*);
         typedef struct { WorkerArg* arg; } Closure;
-        Closure* c = (Closure*)kmm_v4_malloc(sizeof(Closure)); c->arg = &args[i];
-        thread_detach(thread_create((Func)future_map_worker, c));
+        Closure* c = (Closure*)kmm_v4_malloc(sizeof(Closure));
+        if (!c) continue;
+        c->arg = &args[i];
+        thread_detach(thread_create((Func)future_any_worker, c));
     }
     return output->future;
 }

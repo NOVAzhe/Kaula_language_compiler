@@ -629,6 +629,11 @@ func (cg *CodeGenerator) Generate(program *ast.Program) string {
 			idxFunc := strings.Index(result, functionCode.String())
 			idxMain := strings.Index(result, mainCode.String())
 
+			// 防止 strings.Index 返回 -1 导致切片越界 panic
+			if idxType < 0 || idxGlobal < 0 || idxFunc < 0 {
+				return "", fmt.Errorf("failed to locate code sections in generated output")
+			}
+
 			typeOffset = strings.Count(result[:idxType], "\n") + 1
 			globalOffset = strings.Count(result[:idxGlobal], "\n") + 1
 			funcOffset = strings.Count(result[:idxFunc], "\n") + 1

@@ -561,8 +561,10 @@ char* http_response_to_string(HttpResponse* res) {
     offset += snprintf(buffer + offset, 1024 - (offset > 0 ? offset : 0), "\r\n");
 
     if (res->body && res->body_length > 0 && offset < 16384) {
-        memcpy(buffer + offset, res->body, res->body_length);
-        offset += res->body_length;
+        size_t space_left = 16384 - offset - 1;  // 预留 1 字节给 '\0'
+        size_t copy_size = (res->body_length < space_left) ? res->body_length : space_left;
+        memcpy(buffer + offset, res->body, copy_size);
+        offset += copy_size;
     }
 
     buffer[offset] = '\0';

@@ -742,7 +742,7 @@ func (p *Parser) parseVOStatementIterative() ast.Statement {
 		p.nextToken()
 		if p.curTok.Type == lexer.TOKEN_LPAREN {
 			p.nextToken()
-			for p.curTok.Type != lexer.TOKEN_RPAREN {
+			for p.curTok.Type != lexer.TOKEN_RPAREN && p.curTok.Type != lexer.TOKEN_EOF {
 				if p.curTok.Type == lexer.TOKEN_IDENT {
 					p.nextToken()
 					if p.curTok.Type == lexer.TOKEN_ASSIGN {
@@ -1067,7 +1067,7 @@ func (p *Parser) parseObjectStatementIterative() *ast.ObjectStatement {
 		p.nextToken()
 		if p.curTok.Type == lexer.TOKEN_LPAREN {
 			p.nextToken()
-			for p.curTok.Type != lexer.TOKEN_RPAREN {
+			for p.curTok.Type != lexer.TOKEN_RPAREN && p.curTok.Type != lexer.TOKEN_EOF {
 				field := p.parseExpressionIterative()
 				stmt.Fields = append(stmt.Fields, field)
 				if p.curTok.Type == lexer.TOKEN_COMMA {
@@ -2480,7 +2480,7 @@ func (p *Parser) parseMethodStatementIterative() *ast.MethodStatement {
 	p.nextToken()
 	p.log("当前 token: %s, 值：%s", lexer.TokenTypeToString(p.curTok.Type), p.curTok.Value)
 	if p.curTok.Type != lexer.TOKEN_RPAREN {
-		for p.curTok.Type != lexer.TOKEN_RPAREN {
+		for p.curTok.Type != lexer.TOKEN_RPAREN && p.curTok.Type != lexer.TOKEN_EOF {
 			p.log("解析参数，当前 token: %s, 值：%s", lexer.TokenTypeToString(p.curTok.Type), p.curTok.Value)
 
 			// 检查是否是类型关键字
@@ -2548,12 +2548,12 @@ parseMethodBody:
 		p.log("跳过 LBRACE token")
 		p.nextToken()
 		p.log("当前 token: %s, 值：%s", lexer.TokenTypeToString(p.curTok.Type), p.curTok.Value)
-		for p.curTok.Type != lexer.TOKEN_RBRACE {
+		for p.curTok.Type != lexer.TOKEN_RBRACE && p.curTok.Type != lexer.TOKEN_EOF {
 			bodyStmt := p.parseStatementIterative()
 			if bodyStmt != nil {
 				method.Body = append(method.Body, bodyStmt)
 			}
-			if p.curTok.Type != lexer.TOKEN_RBRACE {
+			if p.curTok.Type != lexer.TOKEN_RBRACE && p.curTok.Type != lexer.TOKEN_EOF {
 				p.nextToken()
 				p.log("当前 token: %s, 值：%s", lexer.TokenTypeToString(p.curTok.Type), p.curTok.Value)
 			}
@@ -2656,12 +2656,12 @@ func (p *Parser) parseConstructorStatementIterative() *ast.ConstructorStatement 
 		p.log("跳过 LBRACE token")
 		p.nextToken()
 		p.log("当前 token: %s, 值：%s", lexer.TokenTypeToString(p.curTok.Type), p.curTok.Value)
-		for p.curTok.Type != lexer.TOKEN_RBRACE {
+		for p.curTok.Type != lexer.TOKEN_RBRACE && p.curTok.Type != lexer.TOKEN_EOF {
 			bodyStmt := p.parseStatementIterative()
 			if bodyStmt != nil {
 				constructor.Body = append(constructor.Body, bodyStmt)
 			}
-			if p.curTok.Type != lexer.TOKEN_RBRACE {
+			if p.curTok.Type != lexer.TOKEN_RBRACE && p.curTok.Type != lexer.TOKEN_EOF {
 				p.nextToken()
 				p.log("当前 token: %s, 值：%s", lexer.TokenTypeToString(p.curTok.Type), p.curTok.Value)
 			}
@@ -3184,6 +3184,9 @@ func (p *Parser) speculativeMatchGenericArgs() bool {
 			// 闭合 > ：检查后续是否为 ( ，是则为泛型调用
 			next := p.lexer.Next()
 			return next.Type == lexer.TOKEN_LPAREN
+		case lexer.TOKEN_EOF:
+			// 到达文件末尾，不是泛型调用
+			return false
 		default:
 			// 遇到非类型参数 token，判定为比较运算
 			return false
