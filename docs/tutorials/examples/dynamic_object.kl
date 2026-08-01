@@ -1,0 +1,28 @@
+import std.io
+
+fn main() {
+    println("=== 基本动态对象 ===")
+    auto person = object {
+        name: "Alice",
+        age: 30
+    }
+    println("name: ", person.name)
+    println("age: ", person.age)
+
+    println("=== 修改字段 ===")
+    person.age = 31
+    println("new age: ", person.age)
+
+    println("=== 方法字段 ===")
+    auto calc = object {
+        add: func(int a, int b) int { return a + b },
+        mul: func(int a, int b) int { return a * b }
+    }
+    println("3 + 4 = ", calc.add(3, 4))
+    println("3 * 4 = ", calc.mul(3, 4))
+
+    println("=== 空对象 ===")
+    auto empty = object()
+    empty.name = "dynamic"
+    println("empty.name: ", empty.name)
+}

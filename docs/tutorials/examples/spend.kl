@@ -1,0 +1,36 @@
+import std.io
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+fn describe(Color color) {
+    spend(color) {
+        call(Red)   { println("red") }
+        call(Green) { println("green") }
+        call(Blue)  { println("blue") }
+    }
+}
+
+fn main() {
+    println("=== 枚举模式 spend ===")
+    describe(Color.Red)
+    describe(Color.Green)
+    describe(Color.Blue)
+
+    println("=== 数组模式 spend ===")
+    int[3] arr = [10, 20, 30]
+    spend(arr) {
+        call(1) {
+            println("element 1: ", arr[1])
+        }
+        call(2) {
+            println("element 2: ", arr[2])
+        }
+        call(3) {
+            println("element 3: ", arr[3])
+        }
+    }
+}
