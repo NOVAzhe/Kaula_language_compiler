@@ -210,10 +210,11 @@ u8* base64_decode(const String input, size_t* out_len) {
     size_t out_len_val = len / 4 * 3; if (len > 0 && input.ptr[len-1] == '=') out_len_val--; if (len > 1 && input.ptr[len-2] == '=') out_len_val--;
     u8* output = (u8*)kmm_v4_malloc(out_len_val + 1); size_t i = 0, j = 0;
     while (i < len) {
-        u32 sextet_a = input.ptr[i] == '=' ? 0 : (u32)(strchr(base64_chars, input.ptr[i]) - base64_chars); i++;
-        u32 sextet_b = input.ptr[i] == '=' ? 0 : (u32)(strchr(base64_chars, input.ptr[i]) - base64_chars); i++;
-        u32 sextet_c = input.ptr[i] == '=' ? 0 : (u32)(strchr(base64_chars, input.ptr[i]) - base64_chars); i++;
-        u32 sextet_d = input.ptr[i] == '=' ? 0 : (u32)(strchr(base64_chars, input.ptr[i]) - base64_chars); i++;
+        char* pos;
+        u32 sextet_a = input.ptr[i] == '=' ? 0 : ((pos = strchr(base64_chars, input.ptr[i])) ? (u32)(pos - base64_chars) : 0); i++;
+        u32 sextet_b = input.ptr[i] == '=' ? 0 : ((pos = strchr(base64_chars, input.ptr[i])) ? (u32)(pos - base64_chars) : 0); i++;
+        u32 sextet_c = input.ptr[i] == '=' ? 0 : ((pos = strchr(base64_chars, input.ptr[i])) ? (u32)(pos - base64_chars) : 0); i++;
+        u32 sextet_d = input.ptr[i] == '=' ? 0 : ((pos = strchr(base64_chars, input.ptr[i])) ? (u32)(pos - base64_chars) : 0); i++;
         u32 triple = (sextet_a << 18) | (sextet_b << 12) | (sextet_c << 6) | sextet_d;
         if (j < out_len_val) output[j++] = (triple >> 16) & 0xFF;
         if (j < out_len_val) output[j++] = (triple >> 8) & 0xFF;
@@ -223,7 +224,7 @@ u8* base64_decode(const String input, size_t* out_len) {
     return output;
 }
 
-// AES-128 简化实现 (ECB mode)
+// AES-128 实现 (ECB mode)
 static const u8 aes_sbox[256] = {
     0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
     0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
@@ -260,45 +261,106 @@ static const u8 aes_rsbox[256] = {
     0xa0,0xe0,0x3b,0x4d,0xae,0x2a,0xf5,0xb0,0xc8,0xeb,0xbb,0x3c,0x83,0x53,0x99,0x61,
     0x17,0x2b,0x04,0x7e,0xba,0x77,0xd6,0x26,0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
 };
+static const u8 aes_rcon[10] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36};
+
+static u8 aes_xtime(u8 x) {
+    return (u8)((x << 1) ^ ((x & 0x80) ? 0x1b : 0));
+}
+
+static u8 aes_gf_mul(u8 a, u8 b) {
+    u8 r = 0;
+    for (int i = 0; i < 8; i++) {
+        if (b & 1) r ^= a;
+        u8 hi = a & 0x80;
+        a <<= 1;
+        if (hi) a ^= 0x1b;
+        b >>= 1;
+    }
+    return r;
+}
 
 void aes128_init(AES128Context* ctx, const u8* key) {
     memcpy(ctx->key, key, 16);
-    for (int i = 0; i < 16; i++) ctx->round_keys[i] = key[i];
-    for (int i = 16; i < 176; i++) {
-        u8 temp = ctx->round_keys[i-1];
-        if (i % 16 == 0) {
-            u8 rot = ctx->round_keys[i-3]; ctx->round_keys[i-3] = ctx->round_keys[i-2];
-            ctx->round_keys[i-2] = ctx->round_keys[i-1]; ctx->round_keys[i-1] = rot;
-            temp = aes_sbox[ctx->round_keys[i-16]] ^ (i/16 == 1 ? 0x01 : (i/16 == 2 ? 0x02 : 0x04));
-            ctx->round_keys[i-16] = rot; ctx->round_keys[i-15] = ctx->round_keys[i-14];
-            ctx->round_keys[i-14] = ctx->round_keys[i-13]; ctx->round_keys[i-13] = ctx->round_keys[i-16];
+    memcpy(ctx->round_keys, key, 16);
+    for (int i = 4; i < 44; i++) {
+        u8 t0 = ctx->round_keys[4*(i-1)+0];
+        u8 t1 = ctx->round_keys[4*(i-1)+1];
+        u8 t2 = ctx->round_keys[4*(i-1)+2];
+        u8 t3 = ctx->round_keys[4*(i-1)+3];
+        if (i % 4 == 0) {
+            u8 tmp = t3;
+            t3 = aes_sbox[t0]; t0 = aes_sbox[t1];
+            t1 = aes_sbox[t2]; t2 = aes_sbox[tmp];
+            t0 ^= aes_rcon[i/4 - 1];
         }
-        ctx->round_keys[i] = ctx->round_keys[i-16] ^ temp;
+        ctx->round_keys[4*i+0] = ctx->round_keys[4*(i-4)+0] ^ t0;
+        ctx->round_keys[4*i+1] = ctx->round_keys[4*(i-4)+1] ^ t1;
+        ctx->round_keys[4*i+2] = ctx->round_keys[4*(i-4)+2] ^ t2;
+        ctx->round_keys[4*i+3] = ctx->round_keys[4*(i-4)+3] ^ t3;
     }
 }
 
 void aes128_encrypt(AES128Context* ctx, const u8* input, u8* output) {
-    u8 state[16]; for (int i = 0; i < 16; i++) state[i] = input[i];
+    u8 state[16];
+    for (int i = 0; i < 16; i++) state[i] = input[i];
     for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[i];
     for (int round = 1; round < 10; round++) {
         for (int i = 0; i < 16; i++) state[i] = aes_sbox[state[i]];
-        u8 temp[16];
-        for (int i = 0; i < 4; i++) { temp[i] = state[i]; temp[i+4] = state[i+4]; temp[i+8] = state[i+8]; temp[i+12] = state[i+12]; }
-        state[1] = temp[1]; state[2] = temp[2]; state[3] = temp[3];
-        state[5] = temp[9]; state[9] = temp[13]; state[13] = temp[5];
-        state[6] = temp[10]; state[10] = temp[14]; state[14] = temp[6];
-        state[7] = temp[15]; state[11] = temp[7]; state[15] = temp[11];
+        u8 t0=state[1],t1=state[5],t2=state[9],t3=state[13];
+        state[1]=state[5]; state[5]=state[9]; state[9]=state[13]; state[13]=t0;
+        t0=state[2]; t1=state[6]; t2=state[10]; t3=state[14];
+        state[2]=state[10]; state[6]=state[14]; state[10]=t0; state[14]=t1;
+        t0=state[3]; t1=state[15]; t2=state[7]; t3=state[11];
+        state[3]=state[15]; state[15]=state[11]; state[11]=state[7]; state[7]=t0;
+        for (int c = 0; c < 4; c++) {
+            u8 a0=state[c*4], a1=state[c*4+1], a2=state[c*4+2], a3=state[c*4+3];
+            u8 h = a0 ^ a1 ^ a2 ^ a3;
+            state[c*4+0] ^= h ^ aes_xtime(a0 ^ a1);
+            state[c*4+1] ^= h ^ aes_xtime(a1 ^ a2);
+            state[c*4+2] ^= h ^ aes_xtime(a2 ^ a3);
+            state[c*4+3] ^= h ^ aes_xtime(a3 ^ a0);
+        }
         for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[round*16 + i];
     }
+    for (int i = 0; i < 16; i++) state[i] = aes_sbox[state[i]];
+    u8 t0=state[1],t1=state[5],t2=state[9],t3=state[13];
+    state[1]=state[5]; state[5]=state[9]; state[9]=state[13]; state[13]=t0;
+    t0=state[2]; t1=state[6]; t2=state[10]; t3=state[14];
+    state[2]=state[10]; state[6]=state[14]; state[10]=t0; state[14]=t1;
+    t0=state[3]; t1=state[15]; t2=state[7]; t3=state[11];
+    state[3]=state[15]; state[15]=state[11]; state[11]=state[7]; state[7]=t0;
+    for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[160 + i];
     memcpy(output, state, 16);
 }
 
 void aes128_decrypt(AES128Context* ctx, const u8* input, u8* output) {
-    u8 state[16]; for (int i = 0; i < 16; i++) state[i] = input[i];
-    for (int round = 9; round > 0; round--) {
-        for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[round*16 + i];
+    u8 state[16];
+    for (int i = 0; i < 16; i++) state[i] = input[i];
+    for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[160 + i];
+    for (int round = 9; round >= 1; round--) {
+        u8 t0=state[1],t1=state[13],t2=state[9],t3=state[5];
+        state[1]=state[5]; state[5]=state[9]; state[9]=state[13]; state[13]=t0;
+        t0=state[2]; t1=state[14]; t2=state[10]; t3=state[6];
+        state[2]=state[10]; state[6]=state[14]; state[10]=t0; state[14]=t1;
+        t0=state[3]; t1=state[7]; t2=state[11]; t3=state[15];
+        state[3]=state[15]; state[15]=state[11]; state[11]=state[7]; state[7]=t0;
         for (int i = 0; i < 16; i++) state[i] = aes_rsbox[state[i]];
+        for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[round*16 + i];
+        for (int c = 0; c < 4; c++) {
+            u8 a0=state[c*4], a1=state[c*4+1], a2=state[c*4+2], a3=state[c*4+3];
+            state[c*4+0] = aes_gf_mul(a0, 0x0e) ^ aes_gf_mul(a1, 0x0b) ^ aes_gf_mul(a2, 0x0d) ^ aes_gf_mul(a3, 0x09);
+            state[c*4+1] = aes_gf_mul(a0, 0x09) ^ aes_gf_mul(a1, 0x0e) ^ aes_gf_mul(a2, 0x0b) ^ aes_gf_mul(a3, 0x0d);
+            state[c*4+2] = aes_gf_mul(a0, 0x0d) ^ aes_gf_mul(a1, 0x09) ^ aes_gf_mul(a2, 0x0e) ^ aes_gf_mul(a3, 0x0b);
+            state[c*4+3] = aes_gf_mul(a0, 0x0b) ^ aes_gf_mul(a1, 0x0d) ^ aes_gf_mul(a2, 0x09) ^ aes_gf_mul(a3, 0x0e);
+        }
     }
+    u8 t0=state[1],t1=state[13],t2=state[9],t3=state[5];
+    state[1]=state[5]; state[5]=state[9]; state[9]=state[13]; state[13]=t0;
+    t0=state[2]; t1=state[14]; t2=state[10]; t3=state[6];
+    state[2]=state[10]; state[6]=state[14]; state[10]=t0; state[14]=t1;
+    t0=state[3]; t1=state[7]; t2=state[11]; t3=state[15];
+    state[3]=state[15]; state[15]=state[11]; state[11]=state[7]; state[7]=t0;
+    for (int i = 0; i < 16; i++) state[i] = aes_rsbox[state[i]];
     for (int i = 0; i < 16; i++) state[i] ^= ctx->round_keys[i];
     memcpy(output, state, 16);
 }

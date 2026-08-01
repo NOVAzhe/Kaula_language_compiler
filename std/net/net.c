@@ -85,6 +85,7 @@ Socket* socket_accept(Socket* sock) {
     if (client < 0) return NULL;
 #endif
     Socket* new_sock = (Socket*)kmm_v4_calloc(1, sizeof(Socket));
+    if (!new_sock) return NULL;
     new_sock->family = sock->family;
     new_sock->type = sock->type;
     new_sock->protocol = sock->protocol;

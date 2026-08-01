@@ -74,6 +74,7 @@ void string_set_char_at(String str, size_t index, char c) {
 
 String string_concat(String str1, String str2) {
     size_t total = str1.len + str2.len;
+    if (total < str1.len) return (String){0, NULL}; // overflow check
     char* data = alloc_data(total);
     if (data) {
         if (str1.len > 0) memcpy(data, str1.ptr, str1.len);

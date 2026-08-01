@@ -49,6 +49,7 @@ void vector_push_back(Vector* vector, void* element) {
     if (vector->size >= vector->capacity) {
         // 自动扩容，每次翻倍
         size_t new_capacity = vector->capacity * 2;
+        if (new_capacity < vector->capacity) return; // overflow check
         vector_reserve(vector, new_capacity);
         // 如果扩容失败，vector_reserve不会修改capacity，这里不继续push
     }
@@ -437,10 +438,12 @@ void stack_destroy(Stack* stack) {
 void stack_push(Stack* stack, void* element) {
     if (stack) {
         if (stack->size >= stack->capacity) {
-            void** new_data = (void**)kmm_v4_realloc(stack->data, stack->capacity * 2 * sizeof(void*));
+            size_t new_capacity = stack->capacity * 2;
+            if (new_capacity < stack->capacity) return; // overflow check
+            void** new_data = (void**)kmm_v4_realloc(stack->data, new_capacity * sizeof(void*));
             if (new_data) {
                 stack->data = new_data;
-                stack->capacity *= 2;
+                stack->capacity = new_capacity;
             }
         }
         stack->data[stack->size++] = element;
@@ -498,7 +501,9 @@ void queue_destroy(Queue* queue) {
 void queue_enqueue(Queue* queue, void* element) {
     if (queue) {
         if (queue->size >= queue->capacity) {
-            void** new_data = (void**)kmm_v4_malloc(queue->capacity * 2 * sizeof(void*));
+            size_t new_capacity = queue->capacity * 2;
+            if (new_capacity < queue->capacity) return; // overflow check
+            void** new_data = (void**)kmm_v4_malloc(new_capacity * sizeof(void*));
             if (new_data) {
                 for (size_t i = 0; i < queue->size; i++) {
                     new_data[i] = queue->data[(queue->head + i) % queue->capacity];
@@ -507,7 +512,7 @@ void queue_enqueue(Queue* queue, void* element) {
                 queue->data = new_data;
                 queue->head = 0;
                 queue->tail = queue->size;
-                queue->capacity *= 2;
+                queue->capacity = new_capacity;
             }
         }
         queue->data[queue->tail] = element;
@@ -1030,7 +1035,9 @@ static void priority_queue_sift_down(PriorityQueue* pq, size_t index) {
 void priority_queue_push(PriorityQueue* pq, void* element, int priority) {
     if (!pq) return;
     if (pq->size >= pq->capacity) {
-        pq->capacity *= 2;
+        size_t new_capacity = pq->capacity * 2;
+        if (new_capacity < pq->capacity) return; // overflow check
+        pq->capacity = new_capacity;
         pq->data = (PriorityQueueNode*)kmm_v4_realloc(pq->data, pq->capacity * sizeof(PriorityQueueNode));
     }
     pq->data[pq->size].data = element;

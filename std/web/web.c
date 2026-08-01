@@ -560,7 +560,7 @@ char* http_response_to_string(HttpResponse* res) {
 
     offset += snprintf(buffer + offset, 1024 - (offset > 0 ? offset : 0), "\r\n");
 
-    if (res->body && res->body_length > 0 && offset < 16384) {
+    if (res->body && res->body_length > 0 && offset + res->body_length < 16384) {
         memcpy(buffer + offset, res->body, res->body_length);
         offset += res->body_length;
     }
