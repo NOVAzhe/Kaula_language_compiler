@@ -1,6 +1,6 @@
-/* Kaula bare-metal linker script for x86_64
- * Loads the kernel at 1M, entry _start (defined in the boot stub).
- * Boot stubs: x86_64-pvh.S (Xen PVH) / x86_64-multiboot.S (GRUB/QEMU).
+/* Kaula bare-metal linker script for riscv64
+ * Loads the kernel at 0x80000000 (QEMU virt 惯例，M-mode 直接引导，-bios none）。
+ * Boot stub: riscv64.S（通用入口，无 bootloader 协议）。
  *
  * Contract with boot stubs:
  *   - __bss_start / __bss_end: 由 boot stub 在进入 C 代码前清零
@@ -10,12 +10,9 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 1M;
+    . = 0x80000000;
 
-    .note.Xen  : { KEEP(*(.note.Xen)) }    /* Xen PVH ELF note (pvh 模式) */
-    .multiboot : { KEEP(*(.multiboot)) }   /* Multiboot v1 header (multiboot 模式) */
-    .bootstrap : { *(.bootstrap) }         /* boot stub 32 位入口代码 */
-    .text      : { *(.text*) }
+    .text      : { KEEP(*(.text.boot)) *(.text*) }
     .rodata    : { *(.rodata*) }
     .data      : { *(.data*) }
 

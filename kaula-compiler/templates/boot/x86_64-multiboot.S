@@ -1,20 +1,24 @@
-# Kaula bare-metal boot stub for x86_64 (Xen PVH ELF note)
-# QEMU loads this ELF64 kernel via the PVH note and jumps to _start
-# in 32-bit protected mode. We transition to long mode and call
-# _kaula_entry (the freestanding template entry).
+# Kaula bare-metal boot stub for x86_64 (Multiboot v1)
+# Booted by GRUB / QEMU -kernel (multiboot 支持) via the Multiboot v1 header.
+# Enters 64-bit long mode, zeroes BSS, sets up stack, calls _kaula_entry
+# (the freestanding template entry). Entry symbol: _start (matches linker script).
 #
-# Placeholders: none. Entry symbol: _start (matches linker script).
+# 验证: qemu-system-x86_64 -kernel kernel.elf 或 GRUB 菜单项
+#   亦可用: qemu-system-x86_64 -kernel kernel.elf -device isa-debug-exit
 
-# ===== Xen PVH ELF note (XEN_ELFNOTE_PHYS32_ENTRY = 18) =====
-.section .note.Xen, "a", @note
+# ===== Multiboot v1 header =====
+# flags: ALIGN | MEMINFO | AOUT_KLUDGE（带地址字段，GRUB 与 QEMU 均可确定性加载）
+# 地址字段按链接地址 1M 编写（与模板链接脚本一致）
+.section .multiboot, "a"
 .align 4
-.long 4                  # namesz
-.long 8                  # descsz: 64-bit entry address
-.long 18                 # type: XEN_ELFNOTE_PHYS32_ENTRY
-.asciz "Xen"
-.align 4
-.quad _start             # 32-bit entry point (long-mode trampoline)
-.align 4
+.long 0x1BADB002             # MAGIC
+.long 0x00010003             # FLAGS: ALIGN | MEMINFO | AOUT_KLUDGE
+.long -(0x1BADB002 + 0x00010003)  # CHECKSUM
+.long 0x100000               # header_addr（Multiboot 头所在物理地址）
+.long 0x100000               # load_addr（代码段起始）
+.long 0                     # load_end_addr（0 = 到文件末尾）
+.long 0                     # bss_end_addr（0 = 无独立 BSS）
+.long _start                # entry_addr
 
 # 32-bit entry point
 .section .bootstrap, "ax"
@@ -106,6 +110,7 @@ gdt_ptr:
     .word gdt_ptr - gdt - 1
     .quad gdt
 
+# 页表与栈位于 .bss（boot stub 顶部已清零，随后显式初始化页表）
 .section .bss
 .align 4096
 pml4:
@@ -114,4 +119,3 @@ pdpt:
     .skip 4096
 pd:
     .skip 4096
-# 内核栈由链接脚本统一提供（stack_top 符号，位于 .bss 末尾，已清零）
