@@ -435,7 +435,9 @@ size_t strlen(const char* s);
 #endif
 
 #ifndef KMM_ENABLE_THREAD_CACHE
-    #define KMM_ENABLE_THREAD_CACHE (KMM_THREAD_SAFETY_LEVEL >= 1)
+    // 修复：禁用线程缓存，因其不跟踪分配大小，导致堆缓冲区溢出
+    // 原实现 kmm_thread_cache_alloc 忽略 size 参数，返回任意缓存指针
+    #define KMM_ENABLE_THREAD_CACHE 0
 #endif
 
 // 线程缓存容量（仅用于遗留 kmm_thread_cache 结构体，V4 主路径使用 per-thread heap）
