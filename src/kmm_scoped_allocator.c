@@ -971,9 +971,16 @@ void kmm_free(void* ptr) {
 }
 
 void** kmm_alloc_batch(kmm_context_t* ctx, size_t size, size_t count, const char* file, int line) {
+    // Check for integer overflow in pointer array size
+    if (KMM_V4_UNLIKELY(count > SIZE_MAX / sizeof(void*))) return NULL;
     void** ptrs = (void**)kmm_alloc(ctx, count * sizeof(void*), file, line);
     if (KMM_V4_UNLIKELY(!ptrs)) return NULL;
     
+    // Check for integer overflow in data buffer size
+    if (KMM_V4_UNLIKELY(count > 0 && size > SIZE_MAX / count)) {
+        kmm_free(ptrs);
+        return NULL;
+    }
     uint8_t* base = (uint8_t*)kmm_alloc(ctx, size * count, file, line);
     if (KMM_V4_UNLIKELY(!base)) {
         kmm_free(ptrs);

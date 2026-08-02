@@ -2,6 +2,7 @@
 #include "../memory/memory.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 // 动态数组（Vector）实现
 Vector* vector_create(size_t initial_capacity) {
@@ -31,6 +32,9 @@ void vector_destroy(Vector* vector) {
 
 void vector_reserve(Vector* vector, size_t capacity) {
     if (!vector || capacity <= vector->capacity) return;
+    
+    // Check for integer overflow
+    if (capacity > SIZE_MAX / sizeof(void*)) return;
     
     // 尝试分配新空间
     void** new_data = (void**)kmm_v4_malloc(capacity * sizeof(void*));
