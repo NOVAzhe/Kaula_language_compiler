@@ -438,10 +438,9 @@ void stack_push(Stack* stack, void* element) {
     if (stack) {
         if (stack->size >= stack->capacity) {
             void** new_data = (void**)kmm_v4_realloc(stack->data, stack->capacity * 2 * sizeof(void*));
-            if (new_data) {
-                stack->data = new_data;
-                stack->capacity *= 2;
-            }
+            if (!new_data) return; // 扩容失败，拒绝写入
+            stack->data = new_data;
+            stack->capacity *= 2;
         }
         stack->data[stack->size++] = element;
     }
@@ -499,16 +498,15 @@ void queue_enqueue(Queue* queue, void* element) {
     if (queue) {
         if (queue->size >= queue->capacity) {
             void** new_data = (void**)kmm_v4_malloc(queue->capacity * 2 * sizeof(void*));
-            if (new_data) {
-                for (size_t i = 0; i < queue->size; i++) {
-                    new_data[i] = queue->data[(queue->head + i) % queue->capacity];
-                }
-                // KMM 管理内存，无需手动释放
-                queue->data = new_data;
-                queue->head = 0;
-                queue->tail = queue->size;
-                queue->capacity *= 2;
+            if (!new_data) return; // 扩容失败，拒绝写入
+            for (size_t i = 0; i < queue->size; i++) {
+                new_data[i] = queue->data[(queue->head + i) % queue->capacity];
             }
+            // KMM 管理内存，无需手动释放
+            queue->data = new_data;
+            queue->head = 0;
+            queue->tail = queue->size;
+            queue->capacity *= 2;
         }
         queue->data[queue->tail] = element;
         queue->tail = (queue->tail + 1) % queue->capacity;
@@ -1030,8 +1028,11 @@ static void priority_queue_sift_down(PriorityQueue* pq, size_t index) {
 void priority_queue_push(PriorityQueue* pq, void* element, int priority) {
     if (!pq) return;
     if (pq->size >= pq->capacity) {
-        pq->capacity *= 2;
-        pq->data = (PriorityQueueNode*)kmm_v4_realloc(pq->data, pq->capacity * sizeof(PriorityQueueNode));
+        size_t new_capacity = pq->capacity * 2;
+        PriorityQueueNode* new_data = (PriorityQueueNode*)kmm_v4_realloc(pq->data, new_capacity * sizeof(PriorityQueueNode));
+        if (!new_data) return; // 扩容失败，拒绝写入
+        pq->data = new_data;
+        pq->capacity = new_capacity;
     }
     pq->data[pq->size].data = element;
     pq->data[pq->size].priority = priority;
