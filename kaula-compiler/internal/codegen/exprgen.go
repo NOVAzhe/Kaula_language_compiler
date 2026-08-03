@@ -925,7 +925,7 @@ func (eg *ExpressionGenerator) generatePrintlnCall(args []ast.Expression) string
 			if isFreestanding {
 				return printFn + "(\"" + argCode + "\\n\")"
 			}
-			return "printf(\"" + argCode + "\\n\")"
+			return "printf(\"%ld\\n\", (long)" + argCode + ")"
 		}
 		// cstr 类型（char*）对应 %s
 		formatSpec := argType
@@ -978,6 +978,10 @@ func (eg *ExpressionGenerator) generatePrintCall(args []ast.Expression) string {
 		strEscaped := escapeCString(str)
 
 		if len(args) == 1 {
+			// Use fputs to avoid format string vulnerability
+			if printfName == "printf" {
+				return "fputs(\"" + strEscaped + "\", stdout)"
+			}
 			return printfName + "(\"" + strEscaped + "\")"
 		}
 
@@ -995,6 +999,10 @@ func (eg *ExpressionGenerator) generatePrintCall(args []ast.Expression) string {
 			return b.String()
 		}
 
+		// Use fputs to avoid format string vulnerability
+		if printfName == "printf" {
+			return "fputs(\"" + strEscaped + "\", stdout)"
+		}
 		return printfName + "(\"" + strEscaped + "\")"
 	}
 

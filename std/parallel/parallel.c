@@ -185,9 +185,10 @@ void parallel_sort_with_compare(void* array, size_t count, size_t elem_size,
         
         /* Run sort in a wrapper */
         Task task;
-        task.func = NULL; /* We'll do serial fallback for simplicity */
+        task.func = NULL; /* Disabled: parallel sort not implemented */
         task.arg = ctx;
-        thread_pool_add_task(g_pool, task);
+        /* Skip adding task - will do serial fallback after wait */
+        (void)task;
     }
     
     thread_pool_wait_completion(g_pool);
@@ -220,9 +221,10 @@ void parallel_map(i64* input, i64* output, size_t count, i64 (*transform)(i64)) 
         ctx->transform = transform;
         
         Task task;
-        task.func = NULL;
+        task.func = NULL; /* Disabled: parallel map not implemented */
         task.arg = ctx;
-        thread_pool_add_task(g_pool, task);
+        /* Skip adding task to avoid NULL function pointer crash */
+        (void)task;
     }
     
     thread_pool_wait_completion(g_pool);

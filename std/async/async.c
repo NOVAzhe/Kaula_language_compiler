@@ -315,19 +315,21 @@ int async_event_loop_size(AsyncEventLoop* loop) {
 
 // 简化的异步I/O操作（使用任务队列）
 int async_io_read(AsyncEventLoop* loop, int fd, void* buffer, size_t size) {
+    (void)loop;
     (void)fd;
     (void)buffer;
     (void)size;
-    // 简化实现：在循环中执行读取
-    return light_async_loop_add((LightAsyncLoop*)loop, NULL, NULL);
+    // TODO: Implement actual async I/O
+    return -1; // Not implemented
 }
 
 int async_io_write(AsyncEventLoop* loop, int fd, const void* buffer, size_t size) {
+    (void)loop;
     (void)fd;
     (void)buffer;
     (void)size;
-    // 简化实现：在循环中执行写入
-    return light_async_loop_add((LightAsyncLoop*)loop, NULL, NULL);
+    // TODO: Implement actual async I/O
+    return -1; // Not implemented
 }
 
 // 兼容旧API

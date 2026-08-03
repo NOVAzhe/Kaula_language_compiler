@@ -295,6 +295,7 @@ DynObject* dynobj_create(void) {
 
 Object* dynobj_set(Object* base, const char* key, Object* value) {
 	if (base == NULL || key == NULL) return base;
+	if (strcmp(base->type_name, "DynObject") != 0) return base;
 	DynObject* self = (DynObject*)base;
 
 	if (self->count >= self->bucket_count * 2) {
@@ -331,6 +332,7 @@ Object* dynobj_set(Object* base, const char* key, Object* value) {
 
 Object* dynobj_get(Object* base, const char* key) {
     if (base == NULL || key == NULL) return NULL;
+    if (strcmp(base->type_name, "DynObject") != 0) return NULL;
     DynObject* self = (DynObject*)base;
 
     size_t idx = dynobj_hash_key(key) % self->bucket_count;
@@ -350,6 +352,7 @@ bool dynobj_contains(Object* base, const char* key) {
 
 bool dynobj_delete(Object* base, const char* key) {
     if (base == NULL || key == NULL) return false;
+    if (strcmp(base->type_name, "DynObject") != 0) return false;
     DynObject* self = (DynObject*)base;
 
     size_t idx = dynobj_hash_key(key) % self->bucket_count;
@@ -371,6 +374,7 @@ bool dynobj_delete(Object* base, const char* key) {
 
 void dynobj_clear(Object* base) {
     if (base == NULL) return;
+    if (strcmp(base->type_name, "DynObject") != 0) return;
     DynObject* self = (DynObject*)base;
     for (size_t i = 0; i < self->bucket_count; i++) {
         DynEntry* entry = self->buckets[i];
@@ -388,6 +392,7 @@ void dynobj_clear(Object* base) {
 
 size_t dynobj_size(Object* base) {
     if (base == NULL) return 0;
+    if (strcmp(base->type_name, "DynObject") != 0) return 0;
     return ((DynObject*)base)->count;
 }
 
