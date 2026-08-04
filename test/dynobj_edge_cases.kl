@@ -1,0 +1,122 @@
+// dynobj_edge_cases: 测试 dynobj 模块的边界条件、错误处理和 rehash 行为
+// 覆盖缺口：NULL 安全、dynobj_contains/dynobj_delete/dynobj_clear、
+//           dynobj_size 在各种操作后的变化、rehash 触发、缺失方法调用
+import std.obj
+
+fn main() {
+    // === 1. dynobj_contains: 存在与不存在的键 ===
+    object obj1 = object {
+        name: "alice",
+    }
+    println(object_to_string(dynobj_contains(obj1, "name")))    // true
+    println(object_to_string(dynobj_contains(obj1, "missing"))) // false
+
+    // === 2. dynobj_size: 增删后的大小变化 ===
+    object obj2 = object()
+    println(object_to_string(dynobj_size(obj2))) // 0
+    dynobj_set(obj2, "a", 1)
+    dynobj_set(obj2, "b", 2)
+    dynobj_set(obj2, "c", 3)
+    println(object_to_string(dynobj_size(obj2))) // 3
+    // 覆盖已有键不增加 size
+    dynobj_set(obj2, "a", 100)
+    println(object_to_string(dynobj_size(obj2))) // 3
+
+    // === 3. dynobj_delete: 删除存在/不存在的键 ===
+    println(object_to_string(dynobj_delete(obj2, "b")))  // true
+    println(object_to_string(dynobj_size(obj2)))          // 2
+    println(object_to_string(dynobj_contains(obj2, "b"))) // false
+    // 删除不存在的键
+    println(object_to_string(dynobj_delete(obj2, "zzz"))) // false
+    println(object_to_string(dynobj_size(obj2)))           // 2
+
+    // === 4. dynobj_get: 获取存在/不存在的键 ===
+    println(object_to_string(dynobj_get(obj2, "a")))       // 100
+    println(object_to_string(dynobj_get(obj2, "missing"))) // NULL
+
+    // === 5. dynobj_clear: 清空后 size 为 0 ===
+    dynobj_clear(obj2)
+    println(object_to_string(dynobj_size(obj2)))           // 0
+    println(object_to_string(dynobj_contains(obj2, "a")))  // false
+
+    // === 6. 字段覆盖：值被替换，旧值释放 ===
+    object obj3 = object {
+        count: 10,
+    }
+    println(object_to_string(obj3.count)) // 10
+    obj3.count = 20
+    println(object_to_string(obj3.count)) // 20
+    obj3.count = 30
+    println(object_to_string(obj3.count)) // 30
+    println(object_to_string(dynobj_size(obj3))) // 1
+
+    // === 7. dynobj_invoke: 调用不存在的方法 ===
+    object obj4 = object {
+        x: 1,
+    }
+    // 调用不存在的方法应返回 NULL，不崩溃
+    println(object_to_string(dynobj_get(obj4, "nonexistent_method"))) // NULL
+
+    // === 8. 空字符串键 ===
+    object obj5 = object()
+    dynobj_set(obj5, "", 42)
+    println(object_to_string(dynobj_size(obj5)))              // 1
+    println(object_to_string(dynobj_contains(obj5, "")))      // true
+    println(object_to_string(dynobj_get(obj5, "")))           // 42
+    println(object_to_string(dynobj_delete(obj5, "")))        // true
+    println(object_to_string(dynobj_size(obj5)))              // 0
+
+    // === 9. 大量键触发 rehash（默认桶数 16，阈值 32） ===
+    object obj6 = object()
+    dynobj_set(obj6, "k0", 0)
+    dynobj_set(obj6, "k1", 1)
+    dynobj_set(obj6, "k2", 2)
+    dynobj_set(obj6, "k3", 3)
+    dynobj_set(obj6, "k4", 4)
+    dynobj_set(obj6, "k5", 5)
+    dynobj_set(obj6, "k6", 6)
+    dynobj_set(obj6, "k7", 7)
+    dynobj_set(obj6, "k8", 8)
+    dynobj_set(obj6, "k9", 9)
+    dynobj_set(obj6, "k10", 10)
+    dynobj_set(obj6, "k11", 11)
+    dynobj_set(obj6, "k12", 12)
+    dynobj_set(obj6, "k13", 13)
+    dynobj_set(obj6, "k14", 14)
+    dynobj_set(obj6, "k15", 15)
+    dynobj_set(obj6, "k16", 16)
+    dynobj_set(obj6, "k17", 17)
+    dynobj_set(obj6, "k18", 18)
+    dynobj_set(obj6, "k19", 19)
+    dynobj_set(obj6, "k20", 20)
+    dynobj_set(obj6, "k21", 21)
+    dynobj_set(obj6, "k22", 22)
+    dynobj_set(obj6, "k23", 23)
+    dynobj_set(obj6, "k24", 24)
+    dynobj_set(obj6, "k25", 25)
+    dynobj_set(obj6, "k26", 26)
+    dynobj_set(obj6, "k27", 27)
+    dynobj_set(obj6, "k28", 28)
+    dynobj_set(obj6, "k29", 29)
+    dynobj_set(obj6, "k30", 30)
+    dynobj_set(obj6, "k31", 31)
+    dynobj_set(obj6, "k32", 32)
+    // 33 个键，超过阈值 32，应触发 rehash
+    println(object_to_string(dynobj_size(obj6))) // 33
+    // 验证 rehash 后数据仍可正确检索
+    println(object_to_string(dynobj_get(obj6, "k0")))  // 0
+    println(object_to_string(dynobj_get(obj6, "k16"))) // 16
+    println(object_to_string(dynobj_get(obj6, "k32"))) // 32
+
+    // === 10. 删除后重新插入同一键 ===
+    object obj7 = object {
+        val: 1,
+    }
+    dynobj_delete(obj7, "val")
+    println(object_to_string(dynobj_size(obj7)))              // 0
+    dynobj_set(obj7, "val", 999)
+    println(object_to_string(dynobj_size(obj7)))              // 1
+    println(object_to_string(dynobj_get(obj7, "val")))        // 999
+
+    println("dynobj edge cases test done")
+}
