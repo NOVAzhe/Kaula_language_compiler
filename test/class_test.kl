@@ -1,0 +1,86 @@
+// class_test: 类系统(class)端到端测试
+// 验证类声明、字段、方法、构造函数、接口实现等核心功能
+import std.io
+
+// 1. 基本接口定义
+interface Speaker {
+    fn speak(msg: string) string
+}
+
+// 2. 基本类定义
+class Person {
+    name: string
+    age: int
+
+    constructor(name: string, age: int)
+
+    fn greet() string {
+        return "Hello, my name is " + self.name
+    }
+
+    fn isAdult() bool {
+        return self.age >= 18
+    }
+}
+
+// 3. 实现接口的类
+class Dog {
+    name: string
+
+    constructor(name: string)
+
+    fn speak(msg: string) string {
+        return self.name + " says: " + msg
+    }
+
+    fn bark() string {
+        return "Woof! Woof!"
+    }
+}
+
+// 4. 空类
+class EmptyClass {
+}
+
+// 5. 多字段类
+class Rectangle {
+    width: double
+    height: double
+
+    constructor(width: double, height: double)
+
+    fn area() double {
+        return self.width * self.height
+    }
+
+    fn perimeter() double {
+        return 2.0 * (self.width + self.height)
+    }
+}
+
+fn main() {
+    // 测试基本类
+    let person = Person_new("Alice", 30)
+    println(person.greet())
+    println(person.isAdult())
+
+    // 测试类方法调用
+    let dog = Dog_new("Buddy")
+    println(dog.speak("Hello"))
+    println(dog.bark())
+
+    // 测试空类
+    let empty = EmptyClass_new()
+    println("empty class created")
+
+    // 测试多字段类
+    let rect = Rectangle_new(3.0, 4.0)
+    println(rect.area())
+    println(rect.perimeter())
+
+    // 测试字段访问
+    println(person.name)
+    println(person.age)
+
+    println("all class tests done")
+}
