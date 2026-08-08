@@ -23,6 +23,75 @@ import (
 	"time"
 )
 
+// sanitizeDefine 验证并净化宏定义字符串
+// 仅允许合法的 C 标识符或 标识符=值 格式，防止参数注入
+func sanitizeDefine(define string) string {
+	define = strings.TrimSpace(define)
+	if define == "" {
+		return ""
+	}
+	// 允许的字符：字母、数字、下划线、等号
+	for _, c := range define {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_' || c == '=') {
+			return ""
+		}
+	}
+	return define
+}
+
+// sanitizeLibName 验证并净化链接库名
+// 仅允许字母数字和基本符号，防止参数注入
+func sanitizeLibName(lib string) string {
+	lib = strings.TrimSpace(lib)
+	if lib == "" {
+		return ""
+	}
+	for _, c := range lib {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' || c == ':') {
+			return ""
+		}
+	}
+	return lib
+}
+
+// safeImportPath 验证并安全解析本地 import 路径
+// 确保解析后的路径不会跳出 inputDir 目录，防止路径遍历攻击
+func safeImportPath(localPath, inputDir string) (string, error) {
+	absInputDir, err := filepath.Abs(inputDir)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve input directory: %w", err)
+	}
+	absInputDir = filepath.Clean(absInputDir)
+
+	var resolved string
+	if filepath.IsAbs(localPath) {
+		resolved = filepath.Clean(localPath)
+	} else {
+		// 先尝试以 inputDir 为基准
+		candidate := filepath.Clean(filepath.Join(absInputDir, localPath))
+		if strings.HasPrefix(candidate, absInputDir+string(filepath.Separator)) || candidate == absInputDir {
+			resolved = candidate
+		} else {
+			// 相对路径尝试了 inputDir 但跳出了目录，拒绝
+			return "", fmt.Errorf("import path %q escapes input directory", localPath)
+		}
+	}
+
+	// 再次检查解析后的路径是否在 inputDir 下
+	if !strings.HasPrefix(resolved, absInputDir+string(filepath.Separator)) && resolved != absInputDir {
+		return "", fmt.Errorf("import path %q resolves outside input directory", localPath)
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(resolved); err != nil {
+		return "", fmt.Errorf("import file not found: %s", resolved)
+	}
+
+	return resolved, nil
+}
+
 // precompileLocalImports 预解析本地 .kl 文件 import
 // 返回: (pub 函数名集合, 合并后的 C 函数定义代码)
 func precompileLocalImports(program *ast.Program, inputDir string, stdlibConfig *stdlib.StdlibConfig, cfg *config.Config, errorCollector *errors.ErrorCollector) (map[string]bool, string) {
@@ -46,13 +115,10 @@ func precompileLocalImports(program *ast.Program, inputDir string, stdlibConfig 
 		}
 		compiled[localPath] = true
 
-		absPath := localPath
-		if !filepath.IsAbs(absPath) {
-			// 解析器按 (CWD, 输入文件目录) 两种相对基准解析 LocalPath，
-			// 这里先按输入目录尝试，失败则按 CWD 原样使用
-			if candidate := filepath.Join(inputDir, absPath); fileExists(candidate) {
-				absPath = candidate
-			}
+		absPath, err := safeImportPath(localPath, inputDir)
+		if err != nil {
+			fmt.Printf("[Multi-file] Warning: %v\n", err)
+			continue
 		}
 
 		data, err := os.ReadFile(absPath)
@@ -958,7 +1024,9 @@ func compileBootKernel(cacheFile, outputFile, workDir string, optLevel string, c
 		kernelArgs = append(kernelArgs, flag)
 	}
 	for _, define := range cfg.CDefines {
-		kernelArgs = append(kernelArgs, "-D"+define)
+		if sanitized := sanitizeDefine(define); sanitized != "" {
+			kernelArgs = append(kernelArgs, "-D"+sanitized)
+		}
 	}
 	kernelArgs = append(kernelArgs, cacheFile, "-o", kernelObj)
 	fmt.Printf("[Boot] Compiling kernel C -> %s\n", kernelObj)
@@ -997,7 +1065,9 @@ func compileBootKernel(cacheFile, outputFile, workDir string, optLevel string, c
 				runtimeArgs = append(runtimeArgs, flag)
 			}
 			for _, define := range cfg.CDefines {
-				runtimeArgs = append(runtimeArgs, "-D"+define)
+				if sanitized := sanitizeDefine(define); sanitized != "" {
+					runtimeArgs = append(runtimeArgs, "-D"+sanitized)
+				}
 			}
 			runtimeArgs = append(runtimeArgs, runtimeSrc, "-o", runtimeObj)
 			fmt.Printf("[Boot] Compiling freestanding runtime -> %s\n", runtimeObj)
@@ -1027,7 +1097,9 @@ func compileBootKernel(cacheFile, outputFile, workDir string, optLevel string, c
 				allocArgs = append(allocArgs, flag)
 			}
 			for _, define := range cfg.CDefines {
-				allocArgs = append(allocArgs, "-D"+define)
+				if sanitized := sanitizeDefine(define); sanitized != "" {
+					allocArgs = append(allocArgs, "-D"+sanitized)
+				}
 			}
 			allocArgs = append(allocArgs, allocSrc, "-o", allocObj)
 			fmt.Printf("[Boot] Compiling KMM allocator -> %s\n", allocObj)
@@ -1116,7 +1188,9 @@ func compileUserProgram(cacheFile, outputFile, workDir string, optLevel string, 
 		progArgs = append(progArgs, flag)
 	}
 	for _, define := range cfg.CDefines {
-		progArgs = append(progArgs, "-D"+define)
+		if sanitized := sanitizeDefine(define); sanitized != "" {
+			progArgs = append(progArgs, "-D"+sanitized)
+		}
 	}
 	progArgs = append(progArgs, cacheFile, "-o", progObj)
 	fmt.Printf("[User] Compiling program C -> %s\n", progObj)
@@ -1142,7 +1216,9 @@ func compileUserProgram(cacheFile, outputFile, workDir string, optLevel string, 
 				runtimeArgs = append(runtimeArgs, flag)
 			}
 			for _, define := range cfg.CDefines {
-				runtimeArgs = append(runtimeArgs, "-D"+define)
+				if sanitized := sanitizeDefine(define); sanitized != "" {
+					runtimeArgs = append(runtimeArgs, "-D"+sanitized)
+				}
 			}
 			runtimeArgs = append(runtimeArgs, runtimeSrc, "-o", runtimeObj)
 			if out, err := exec.Command(clangPath, runtimeArgs...).CombinedOutput(); err != nil {
@@ -1167,7 +1243,9 @@ func compileUserProgram(cacheFile, outputFile, workDir string, optLevel string, 
 				allocArgs = append(allocArgs, flag)
 			}
 			for _, define := range cfg.CDefines {
-				allocArgs = append(allocArgs, "-D"+define)
+				if sanitized := sanitizeDefine(define); sanitized != "" {
+					allocArgs = append(allocArgs, "-D"+sanitized)
+				}
 			}
 			allocArgs = append(allocArgs, allocSrc, "-o", allocObj)
 			if out, err := exec.Command(clangPath, allocArgs...).CombinedOutput(); err != nil {
@@ -1320,11 +1398,9 @@ func collectLocalPubFuncs(program *ast.Program, inputDir string) map[string]bool
 			if !ok || !imp.IsLocal {
 				continue
 			}
-			absPath := imp.LocalPath
-			if !filepath.IsAbs(absPath) {
-				if candidate := filepath.Join(dir, absPath); fileExists(candidate) {
-					absPath = candidate
-				}
+			absPath, err := safeImportPath(imp.LocalPath, dir)
+			if err != nil {
+				continue
 			}
 			data, err := os.ReadFile(absPath)
 			if err != nil {
@@ -1363,11 +1439,9 @@ func collectLocalAllFuncs(program *ast.Program, inputDir string) map[string]bool
 			if !ok || !imp.IsLocal {
 				continue
 			}
-			absPath := imp.LocalPath
-			if !filepath.IsAbs(absPath) {
-				if candidate := filepath.Join(dir, absPath); fileExists(candidate) {
-					absPath = candidate
-				}
+			absPath, err := safeImportPath(imp.LocalPath, dir)
+			if err != nil {
+				continue
 			}
 			data, err := os.ReadFile(absPath)
 			if err != nil {
@@ -2215,15 +2289,28 @@ func compileCCode(cFile, outputFile, workDir string, usedModules []string, cCode
 	}
 
 	// 添加用户自定义的 C 编译器参数
+	// 安全警告：CFlags 直接传递给 clang 进程，不经过 shell 解析
+	// （Go exec.Command 无 shell 注入风险）
+	// 但仍需注意参数注入：-Xclang -load -Xclang <path> 可加载恶意插件
 	if cfg != nil {
 		for _, flag := range cfg.CFlags {
 			clangArgs = append(clangArgs, flag)
 		}
 		for _, define := range cfg.CDefines {
-			clangArgs = append(clangArgs, "-D"+define)
+			// 防止宏定义注入（仅允许合法的标识符值）
+			if sanitized := sanitizeDefine(define); sanitized != "" {
+				clangArgs = append(clangArgs, "-D"+sanitized)
+			} else {
+				fmt.Printf("[Warning] Skipping invalid define: %s\n", define)
+			}
 		}
 		for _, lib := range cfg.CLibs {
-			clangArgs = append(clangArgs, "-l"+lib)
+			// 防止库名注入（仅允许字母数字和基本符号）
+			if sanitized := sanitizeLibName(lib); sanitized != "" {
+				clangArgs = append(clangArgs, "-l"+sanitized)
+			} else {
+				fmt.Printf("[Warning] Skipping invalid library name: %s\n", lib)
+			}
 		}
 
 		// ====== 裸机/交叉编译模式 ======
