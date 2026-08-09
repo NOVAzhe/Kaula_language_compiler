@@ -27,6 +27,31 @@ struct Template {
     size_t filter_capacity;
 };
 
+// 对 HTML 特殊字符进行转义，防止 XSS/SSTI 注入
+// 返回新分配的字符串，调用者需 kmm_v4_free
+static char* escape_html(const char* s) {
+    if (!s) return NULL;
+    size_t len = strlen(s);
+    // 最坏情况：每个字符都是特殊字符，需替换为 &...; (最多 6 字节)
+    size_t max_len = len * 6 + 1;
+    char* result = (char*)kmm_v4_malloc(max_len);
+    if (!result) return NULL;
+
+    size_t pos = 0;
+    for (size_t i = 0; i < len; i++) {
+        switch (s[i]) {
+            case '&':  memcpy(result + pos, "&amp;", 5);  pos += 5; break;
+            case '<':  memcpy(result + pos, "&lt;", 4);   pos += 4; break;
+            case '>':  memcpy(result + pos, "&gt;", 4);   pos += 4; break;
+            case '"':  memcpy(result + pos, "&quot;", 6); pos += 6; break;
+            case '\'': memcpy(result + pos, "&#39;", 5);  pos += 5; break;
+            default:   result[pos++] = s[i]; break;
+        }
+    }
+    result[pos] = '\0';
+    return result;
+}
+
 Template* template_load(const char* path) {
     size_t size;
     char* content = fs_read_file(path, &size);
@@ -102,13 +127,17 @@ char* template_render(Template* tpl, const void* data) {
             
             const char* value = template_find_variable(tpl, var_name);
             if (value) {
-                size_t value_len = strlen(value);
+                // 对变量值进行 HTML 转义，防止 XSS/SSTI 注入
+                char* escaped = escape_html(value);
+                const char* output = escaped ? escaped : value;
+                size_t value_len = strlen(output);
                 if (pos + value_len >= capacity) {
                     capacity *= 2;
                     result = (char*)kmm_v4_realloc(result, capacity);
                 }
-                strcpy(result + pos, value);
+                strcpy(result + pos, output);
                 pos += value_len;
+                if (escaped) kmm_v4_free(escaped);
             }
             
             kmm_v4_free(var_name);
