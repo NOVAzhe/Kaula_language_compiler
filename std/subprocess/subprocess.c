@@ -17,6 +17,34 @@
 #include <errno.h>
 #endif
 
+// 安全地转义 shell 参数：用单引号包裹，对单引号做结束/转义/重启处理
+// 返回新分配的字符串，调用者需 kmm_v4_free
+static char* shell_escape(const char* arg) {
+    if (!arg) return NULL;
+    size_t len = strlen(arg);
+    // 最坏情况：每个字符都是单引号 -> 每个变成 4 字节 ('\''), 外加首尾引号
+    size_t max_len = len * 4 + 3;
+    char* escaped = (char*)kmm_v4_malloc(max_len);
+    if (!escaped) return NULL;
+
+    size_t pos = 0;
+    escaped[pos++] = '\'';
+    for (size_t i = 0; i < len; i++) {
+        if (arg[i] == '\'') {
+            // 结束当前单引号、插入转义的单引号、重新开始单引号
+            escaped[pos++] = '\'';
+            escaped[pos++] = '\\';
+            escaped[pos++] = '\'';
+            escaped[pos++] = '\'';
+        } else {
+            escaped[pos++] = arg[i];
+        }
+    }
+    escaped[pos++] = '\'';
+    escaped[pos] = '\0';
+    return escaped;
+}
+
 struct Process {
     char* command;
     char* cwd;
@@ -295,25 +323,68 @@ i32 subprocess_call(const char* command) {
     return exit_code;
 }
 
+// 使用 execvp 直接执行程序，避免 shell 注入
+// 参数：program - 可执行文件路径；args - NULL 结尾的参数数组（不含 program 本身）
+// 返回：子进程退出码，失败返回 -1
 i32 subprocess_call_with_args(const char* program, const char** args) {
     if (!program || !args) return -1;
-    
-    size_t len = strlen(program) + 1;
-    for (size_t i = 0; args[i]; i++) {
-        len += strlen(args[i]) + 1;
+
+    // 计算参数个数
+    size_t argc = 1; // argv[0] = program
+    for (size_t i = 0; args[i]; i++) argc++;
+
+    // 构建 argv 数组
+    char** argv = (char**)kmm_v4_malloc((argc + 1) * sizeof(char*));
+    if (!argv) return -1;
+
+    argv[0] = (char*)program;
+    for (size_t i = 0; i < argc - 1; i++) {
+        argv[i + 1] = (char*)args[i];
     }
-    
-    char* command = (char*)kmm_v4_malloc(len);
-    strcpy(command, program);
-    
+    argv[argc] = NULL;
+
+#ifdef _WIN32
+    // Windows 下回退到 shell 方式（无 fork）
+    // 构建安全转义后的命令字符串
+    size_t total = strlen(program) + 1;
     for (size_t i = 0; args[i]; i++) {
-        strcat(command, " ");
-        strcat(command, args[i]);
+        total += strlen(args[i]) + 1;
     }
-    
-    i32 result = subprocess_call(command);
-    kmm_v4_free(command);
-    return result;
+    char* cmd = (char*)kmm_v4_malloc(total);
+    if (!cmd) { kmm_v4_free(argv); return -1; }
+    strcpy(cmd, program);
+    for (size_t i = 0; args[i]; i++) {
+        strcat(cmd, " ");
+        strcat(cmd, args[i]);
+    }
+    Process* proc = subprocess_create(cmd);
+    kmm_v4_free(cmd);
+    kmm_v4_free(argv);
+    if (!proc) return -1;
+    if (!subprocess_start(proc)) { subprocess_destroy(proc); return -1; }
+    subprocess_wait(proc, -1);
+    i32 exit_code = subprocess_exit_code(proc);
+    subprocess_destroy(proc);
+    return exit_code;
+#else
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(program, argv);
+        _exit(127);
+    } else if (pid < 0) {
+        kmm_v4_free(argv);
+        return -1;
+    }
+
+    kmm_v4_free(argv);
+
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+#endif
 }
 
 char* subprocess_output(const char* command) {

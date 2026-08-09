@@ -3,10 +3,57 @@ package pkgmgr
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
+
+// isValidMirrorURL 验证镜像 URL 是否安全（仅允许 HTTP/HTTPS，禁止内网地址）
+func isValidMirrorURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	// 仅允许 http 和 https 协议
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported scheme: %s", u.Scheme)
+	}
+
+	// 禁止包含用户信息（认证凭据）
+	if u.User != nil {
+		return fmt.Errorf("URL must not contain user credentials")
+	}
+
+	// 解析主机名
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("empty host")
+	}
+
+	// 禁止 IP 文字和 localhost
+	if strings.HasPrefix(host, "127.") || host == "localhost" || host == "::1" || host == "0.0.0.0" {
+		return fmt.Errorf("forbidden host: %s", host)
+	}
+
+	// 尝试解析 IP，检查是否为内网地址
+	ips, err := net.LookupHost(host)
+	if err == nil {
+		for _, ip := range ips {
+			parsed := net.ParseIP(ip)
+			if parsed != nil {
+				if parsed.IsPrivate() || parsed.IsLoopback() || parsed.IsLinkLocalUnicast() || parsed.IsUnspecified() {
+					return fmt.Errorf("forbidden private IP: %s", ip)
+				}
+			}
+		}
+	}
+
+	return nil
+}
 
 // MirrorTestResult 镜像测速结果
 type MirrorTestResult struct {
@@ -21,6 +68,12 @@ type MirrorTestResult struct {
 // 发送 Range 请求下载前 64KB 来测量
 func TestMirror(url string, timeout time.Duration) MirrorTestResult {
 	result := MirrorTestResult{URL: url}
+
+	// 安全校验：防止 SSRF
+	if err := isValidMirrorURL(url); err != nil {
+		result.Error = fmt.Errorf("SSRF check failed: %w", err)
+		return result
+	}
 
 	client := &http.Client{Timeout: timeout}
 

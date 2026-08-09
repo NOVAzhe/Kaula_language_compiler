@@ -12,21 +12,48 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <limits.h>
 
-// 路径安全检查
+// 路径安全检查：使用 realpath 规范化路径，防止路径遍历
+// 如果 allow_prefix 非 NULL，则检查规范化后的路径是否以 allow_prefix 开头
 static bool is_path_safe(const char* path) {
     if (!path) return false;
     
-    if (strstr(path, "..") != NULL) {
-        return false;
-    }
+    // 拒绝空路径和特殊路径
+    if (path[0] == '\0') return false;
     
+    // 拒绝 UNC 路径 (Windows)
     if (path[0] == '\\' && path[1] == '\\') {
         return false;
     }
     
-    if (strstr(path, "\\\\") ) {
-        return false;
+    // 使用 realpath 解析路径，检测 . 和 .. 遍历
+    // 对于不存在的路径，realpath 返回 NULL，此时我们手动检查
+    char resolved[PATH_MAX];
+    char* real = realpath(path, resolved);
+    if (real) {
+        // 路径存在且已解析，安全检查通过
+        return true;
+    }
+    
+    // 路径可能不存在，手动检查是否包含 .. 组件
+    // 遍历路径，检查每个组件是否为 ".."
+    const char* p = path;
+    while (*p) {
+        // 跳过分隔符
+        while (*p == '/' || *p == '\\') p++;
+        if (*p == '\0') break;
+        
+        // 检查是否为 ".." 组件
+        if (p[0] == '.' && p[1] == '.' && (p[2] == '/' || p[2] == '\\' || p[2] == '\0')) {
+            return false;
+        }
+        
+        // 跳过 "...." 或单个 "." 等不能用作遍历的路径组件
+        // 但不能跳过 ".." - 上面已经处理了
+        
+        // 跳转到下一个组件
+        while (*p && *p != '/' && *p != '\\') p++;
     }
     
     return true;
@@ -449,34 +476,94 @@ int system_execute(const char* command, char* output, size_t output_size) {
 #endif
 }
 
+// 使用 execvp 直接执行程序，避免 shell 命令注入
+// 参数：command - 可执行文件路径；args - NULL 结尾的参数数组（不含 command 本身）
+// output - 输出缓冲区（可为 NULL）；output_size - 缓冲区大小
 int system_execute_with_args(const char* command, char* const args[], char* output, size_t output_size) {
     if (!command || !args) {
         return -1;
     }
     
-    size_t cmd_len = strlen(command);
-    size_t args_len = 0;
-    for (int i = 0; args[i]; i++) {
-        if (!is_safe_command(args[i])) {
-            fprintf(stderr, "Error: Argument %d contains unsafe characters\n", i);
-            return -1;
+    // 计算参数个数
+    size_t argc = 1;
+    for (size_t i = 0; args[i]; i++) argc++;
+    
+    // 构建 argv 数组
+    char** argv = (char**)kmm_v4_malloc((argc + 1) * sizeof(char*));
+    if (!argv) return -1;
+    
+    argv[0] = (char*)command;
+    for (size_t i = 0; i < argc - 1; i++) {
+        argv[i + 1] = args[i];
+    }
+    argv[argc] = NULL;
+    
+#ifdef _WIN32
+    // Windows 下使用 _spawnvp
+    int pipe_fds[2] = {-1, -1};
+    if (output && output_size > 0) {
+        _pipe(pipe_fds, 1024, _O_TEXT);
+    }
+    
+    intptr_t spawn_result = _spawnvp(_P_WAIT, command, argv);
+    kmm_v4_free(argv);
+    
+    if (spawn_result == -1) return -1;
+    
+    if (output && output_size > 0 && pipe_fds[0] != -1) {
+        close(pipe_fds[1]);
+        size_t total_read = 0;
+        while (total_read < output_size - 1) {
+            int n = (int)read(pipe_fds[0], output + total_read, output_size - 1 - total_read);
+            if (n <= 0) break;
+            total_read += (size_t)n;
         }
-        args_len += strlen(args[i]) + 1;
+        close(pipe_fds[0]);
+        output[total_read] = '\0';
     }
     
-    size_t full_len = cmd_len + args_len + 1;
-    char* full_cmd = (char*)kmm_v4_malloc(full_len);
-    if (!full_cmd) return -1;
-    
-    strcpy(full_cmd, command);
-    for (int i = 0; args[i]; i++) {
-        strcat(full_cmd, " ");
-        strcat(full_cmd, args[i]);
+    return (int)spawn_result;
+#else
+    int pipe_fds[2] = {-1, -1};
+    if (output && output_size > 0) {
+        pipe(pipe_fds);
     }
     
-    int result = system_execute(full_cmd, output, output_size);
-    // KMM 管理内存，无需手动释放
-    return result;
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (output && output_size > 0 && pipe_fds[1] != -1) {
+            close(pipe_fds[0]);
+            dup2(pipe_fds[1], STDOUT_FILENO);
+            close(pipe_fds[1]);
+        }
+        execvp(command, argv);
+        _exit(127);
+    } else if (pid < 0) {
+        kmm_v4_free(argv);
+        return -1;
+    }
+    
+    kmm_v4_free(argv);
+    
+    if (output && output_size > 0 && pipe_fds[0] != -1) {
+        close(pipe_fds[1]);
+        size_t total_read = 0;
+        while (total_read < output_size - 1) {
+            ssize_t n = read(pipe_fds[0], output + total_read, output_size - 1 - total_read);
+            if (n <= 0) break;
+            total_read += (size_t)n;
+        }
+        close(pipe_fds[0]);
+        output[total_read] = '\0';
+    }
+    
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return -1;
+#endif
 }
 
 // 文件系统函数

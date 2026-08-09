@@ -24,7 +24,37 @@
 #define HTTP_MAX_HEADERS 64
 #define HTTP_HEADER_BUFFER_SIZE 4096
 
-static bool ws_initialized = false;
+static void ws_initialized = false;
+
+// 去除字符串中的 CR (\r) 和 LF (\n) 字符，防止 HTTP 头注入/响应拆分
+// 直接修改原字符串，返回原指针
+static char* sanitize_crlf(char* str) {
+    if (!str) return NULL;
+    size_t write_pos = 0;
+    for (size_t i = 0; str[i] != '\0'; i++) {
+        if (str[i] != '\r' && str[i] != '\n') {
+            str[write_pos++] = str[i];
+        }
+    }
+    str[write_pos] = '\0';
+    return str;
+}
+
+// 创建 CRLF 安全的字符串副本（移除 \r \n）
+static char* sanitize_crlf_dup(const char* str) {
+    if (!str) return NULL;
+    size_t len = strlen(str);
+    char* safe = (char*)kmm_v4_malloc(len + 1);
+    if (!safe) return NULL;
+    size_t write_pos = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (str[i] != '\r' && str[i] != '\n') {
+            safe[write_pos++] = str[i];
+        }
+    }
+    safe[write_pos] = '\0';
+    return safe;
+}
 
 static void ws_init(void) {
     if (ws_initialized) return;
@@ -494,14 +524,23 @@ void http_response_set_content_type(HttpResponse* res, const char* content_type)
 void http_response_set_header(HttpResponse* res, const char* name, const char* value) {
     if (!res || !name || !value) return;
 
-    size_t name_len = strlen(name);
-    size_t value_len = strlen(value);
+    // 防止 CRLF 注入
+    char* safe_name = sanitize_crlf_dup(name);
+    char* safe_value = sanitize_crlf_dup(value);
+    if (!safe_name || !safe_value) {
+        if (safe_name) kmm_v4_free(safe_name);
+        if (safe_value) kmm_v4_free(safe_value);
+        return;
+    }
+
+    size_t name_len = strlen(safe_name);
+    size_t value_len = strlen(safe_value);
     size_t entry_len = name_len + 2 + value_len + 2;
 
     char* new_entry = (char*)kmm_v4_malloc(entry_len);
-    if (!new_entry) return;
+    if (!new_entry) { kmm_v4_free(safe_name); kmm_v4_free(safe_value); return; }
 
-    snprintf(new_entry, entry_len, "%s: %s\r\n", name, value);
+    snprintf(new_entry, entry_len, "%s: %s\r\n", safe_name, safe_value);
 
     if (res->headers) {
         size_t old_len = strlen(res->headers);
@@ -514,6 +553,9 @@ void http_response_set_header(HttpResponse* res, const char* name, const char* v
     } else {
         res->headers = new_entry;
     }
+
+    kmm_v4_free(safe_name);
+    kmm_v4_free(safe_value);
 }
 
 void http_response_set_json(HttpResponse* res, const char* json_string) {
@@ -632,10 +674,15 @@ HttpResponse* http_client_get(HttpClient* client, const char* url) {
         return NULL;
     }
 
+    // 防止 CRLF 注入
+    char safe_path[1024] = {0};
+    char safe_query[1024] = {0};
+    if (parts->path) { strncpy(safe_path, parts->path, sizeof(safe_path) - 1); sanitize_crlf(safe_path); }
+    if (parts->query) { strncpy(safe_query, parts->query, sizeof(safe_query) - 1); sanitize_crlf(safe_query); }
     char request[1024];
     snprintf(request, sizeof(request), "GET /%s%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "",
-        parts->query ? parts->query : "",
+        safe_path,
+        safe_query,
         parts->host);
 
     if (!socket_write(client->socket, request, strlen(request))) {
@@ -689,13 +736,21 @@ HttpResponse* http_client_post(HttpClient* client, const char* url, const char* 
 
     size_t body_len = body ? strlen(body) : 0;
 
+    // 防止 CRLF 注入
+    char safe_path[1024] = {0};
+    char safe_query[1024] = {0};
+    char safe_content_type[128] = {0};
+    if (parts->path) { strncpy(safe_path, parts->path, sizeof(safe_path) - 1); sanitize_crlf(safe_path); }
+    if (parts->query) { strncpy(safe_query, parts->query, sizeof(safe_query) - 1); sanitize_crlf(safe_query); }
+    if (content_type) { strncpy(safe_content_type, content_type, sizeof(safe_content_type) - 1); sanitize_crlf(safe_content_type); }
+
     char request[8192];
     snprintf(request, sizeof(request),
         "POST /%s%s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "",
-        parts->query ? parts->query : "",
+        safe_path,
+        safe_query,
         parts->host,
-        content_type ? content_type : MIME_APP_FORM,
+        safe_content_type[0] ? safe_content_type : MIME_APP_FORM,
         body_len);
 
     size_t header_len = strlen(request);
@@ -755,13 +810,21 @@ HttpResponse* http_client_put(HttpClient* client, const char* url, const char* b
 
     size_t body_len = body ? strlen(body) : 0;
 
+    // 防止 CRLF 注入
+    char safe_path[1024] = {0};
+    char safe_query[1024] = {0};
+    char safe_content_type[128] = {0};
+    if (parts->path) { strncpy(safe_path, parts->path, sizeof(safe_path) - 1); sanitize_crlf(safe_path); }
+    if (parts->query) { strncpy(safe_query, parts->query, sizeof(safe_query) - 1); sanitize_crlf(safe_query); }
+    if (content_type) { strncpy(safe_content_type, content_type, sizeof(safe_content_type) - 1); sanitize_crlf(safe_content_type); }
+
     char request[8192];
     snprintf(request, sizeof(request),
         "PUT /%s%s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "",
-        parts->query ? parts->query : "",
+        safe_path,
+        safe_query,
         parts->host,
-        content_type ? content_type : MIME_APP_FORM,
+        safe_content_type[0] ? safe_content_type : MIME_APP_FORM,
         body_len);
 
     size_t header_len = strlen(request);
@@ -809,9 +872,12 @@ HttpResponse* http_client_delete(HttpClient* client, const char* url) {
         return NULL;
     }
 
+    // 防止 CRLF 注入
+    char safe_path[1024] = {0};
+    if (parts->path) { strncpy(safe_path, parts->path, sizeof(safe_path) - 1); sanitize_crlf(safe_path); }
     char request[1024];
     snprintf(request, sizeof(request), "DELETE /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "", parts->host);
+        safe_path, parts->host);
 
     socket_write(client->socket, request, strlen(request));
 
