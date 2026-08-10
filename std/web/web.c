@@ -501,7 +501,26 @@ void http_response_set_header(HttpResponse* res, const char* name, const char* v
     char* new_entry = (char*)kmm_v4_malloc(entry_len);
     if (!new_entry) return;
 
-    snprintf(new_entry, entry_len, "%s: %s\r\n", name, value);
+    /* 安全地构建头字段：使用 snprintf 并确保不包含 CR/LF */
+    int written = snprintf(new_entry, entry_len, "%s: %s\r\n", name, value);
+    if (written < 0 || (size_t)written >= entry_len) {
+        kmm_v4_free(new_entry);
+        return;
+    }
+
+    /* 检查 name 和 value 中是否含有 CR/LF —— 若有则拒绝设置此头 */
+    for (size_t i = 0; i < name_len; i++) {
+        if (name[i] == '\r' || name[i] == '\n') {
+            kmm_v4_free(new_entry);
+            return;
+        }
+    }
+    for (size_t i = 0; i < value_len; i++) {
+        if (value[i] == '\r' || value[i] == '\n') {
+            kmm_v4_free(new_entry);
+            return;
+        }
+    }
 
     if (res->headers) {
         size_t old_len = strlen(res->headers);
@@ -632,11 +651,25 @@ HttpResponse* http_client_get(HttpClient* client, const char* url) {
         return NULL;
     }
 
+    /* 安全构建请求：对 path 和 host 进行 CRLF 检查 */
+    const char* safe_path = parts->path ? parts->path : "";
+    const char* safe_query = parts->query ? parts->query : "";
+    const char* safe_host = parts->host ? parts->host : "";
+    for (const char* p = safe_path; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_path = ""; break; }
+    }
+    for (const char* p = safe_query; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_query = ""; break; }
+    }
+    for (const char* p = safe_host; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_host = ""; break; }
+    }
+
     char request[1024];
     snprintf(request, sizeof(request), "GET /%s%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "",
-        parts->query ? parts->query : "",
-        parts->host);
+        safe_path,
+        safe_query,
+        safe_host);
 
     if (!socket_write(client->socket, request, strlen(request))) {
         CLOSE_SOCKET(client->socket);
@@ -689,13 +722,31 @@ HttpResponse* http_client_post(HttpClient* client, const char* url, const char* 
 
     size_t body_len = body ? strlen(body) : 0;
 
+    /* 安全构建请求：对 path 和 host 进行 CRLF 检查 */
+    const char* safe_path = parts->path ? parts->path : "";
+    const char* safe_query = parts->query ? parts->query : "";
+    const char* safe_host = parts->host ? parts->host : "";
+    const char* safe_ct = content_type ? content_type : MIME_APP_FORM;
+    for (const char* p = safe_path; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_path = ""; break; }
+    }
+    for (const char* p = safe_query; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_query = ""; break; }
+    }
+    for (const char* p = safe_host; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_host = ""; break; }
+    }
+    for (const char* p = safe_ct; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_ct = MIME_APP_FORM; break; }
+    }
+
     char request[8192];
     snprintf(request, sizeof(request),
         "POST /%s%s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "",
-        parts->query ? parts->query : "",
-        parts->host,
-        content_type ? content_type : MIME_APP_FORM,
+        safe_path,
+        safe_query,
+        safe_host,
+        safe_ct,
         body_len);
 
     size_t header_len = strlen(request);
@@ -755,13 +806,31 @@ HttpResponse* http_client_put(HttpClient* client, const char* url, const char* b
 
     size_t body_len = body ? strlen(body) : 0;
 
+    /* 安全构建请求：对 path 和 host 进行 CRLF 检查 */
+    const char* safe_path = parts->path ? parts->path : "";
+    const char* safe_query = parts->query ? parts->query : "";
+    const char* safe_host = parts->host ? parts->host : "";
+    const char* safe_ct = content_type ? content_type : MIME_APP_FORM;
+    for (const char* p = safe_path; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_path = ""; break; }
+    }
+    for (const char* p = safe_query; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_query = ""; break; }
+    }
+    for (const char* p = safe_host; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_host = ""; break; }
+    }
+    for (const char* p = safe_ct; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_ct = MIME_APP_FORM; break; }
+    }
+
     char request[8192];
     snprintf(request, sizeof(request),
         "PUT /%s%s HTTP/1.1\r\nHost: %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "",
-        parts->query ? parts->query : "",
-        parts->host,
-        content_type ? content_type : MIME_APP_FORM,
+        safe_path,
+        safe_query,
+        safe_host,
+        safe_ct,
         body_len);
 
     size_t header_len = strlen(request);
@@ -809,9 +878,19 @@ HttpResponse* http_client_delete(HttpClient* client, const char* url) {
         return NULL;
     }
 
+    /* 安全构建请求：对 path 和 host 进行 CRLF 检查 */
+    const char* safe_path = parts->path ? parts->path : "";
+    const char* safe_host = parts->host ? parts->host : "";
+    for (const char* p = safe_path; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_path = ""; break; }
+    }
+    for (const char* p = safe_host; *p; p++) {
+        if (*p == '\r' || *p == '\n') { safe_host = ""; break; }
+    }
+
     char request[1024];
     snprintf(request, sizeof(request), "DELETE /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
-        parts->path ? parts->path : "", parts->host);
+        safe_path, safe_host);
 
     socket_write(client->socket, request, strlen(request));
 

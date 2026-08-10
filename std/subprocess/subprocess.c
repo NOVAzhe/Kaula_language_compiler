@@ -182,6 +182,133 @@ bool_t subprocess_start(Process* proc) {
 #endif
 }
 
+/* 内部函数：使用 execvp 直接执行程序（不经过 shell），避免命令注入 */
+static bool_t subprocess_start_execvp(Process* proc, const char* program, char* const argv[]) {
+    if (!proc || !program) return false;
+    
+#ifdef _WIN32
+    /* Windows 下直接用 CreateProcess 执行程序 */
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+    
+    HANDLE hStdinRead = NULL, hStdinWrite = NULL;
+    HANDLE hStdoutRead = NULL, hStdoutWrite = NULL;
+    HANDLE hStderrRead = NULL, hStderrWrite = NULL;
+    
+    if (proc->pipe_stdin) CreatePipe(&hStdinRead, &hStdinWrite, &sa, 0);
+    if (proc->pipe_stdout) CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0);
+    if (proc->pipe_stderr) CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0);
+    
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+    
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = hStdinRead;
+    si.hStdOutput = hStdoutWrite;
+    si.hStdError = hStderrWrite;
+    
+    /* 构建命令行字符串 */
+    size_t cmd_len = strlen(program) + 3;
+    for (int i = 1; argv[i]; i++) {
+        cmd_len += strlen(argv[i]) + 3;
+    }
+    char* cmd_line = (char*)kmm_v4_malloc(cmd_len + 1);
+    if (!cmd_line) return false;
+    cmd_line[0] = '\0';
+    strcat(cmd_line, "\"");
+    strcat(cmd_line, program);
+    strcat(cmd_line, "\"");
+    for (int i = 1; argv[i]; i++) {
+        strcat(cmd_line, " \"");
+        strcat(cmd_line, argv[i]);
+        strcat(cmd_line, "\"");
+    }
+    
+    BOOL result = CreateProcess(
+        program, cmd_line, NULL, NULL, TRUE, 0, NULL,
+        proc->cwd ? proc->cwd : NULL, &si, &pi
+    );
+    
+    kmm_v4_free(cmd_line);
+    
+    if (!result) return false;
+    
+    proc->hProcess = pi.hProcess;
+    proc->hThread = pi.hThread;
+    proc->pid = pi.dwProcessId;
+    proc->running = true;
+    
+    if (proc->pipe_stdin) {
+        CloseHandle(hStdinRead);
+        proc->stdin_file = _fdopen(_open_osfhandle((intptr_t)hStdinWrite, _O_TEXT), "w");
+    }
+    if (proc->pipe_stdout) {
+        CloseHandle(hStdoutWrite);
+        proc->stdout_file = _fdopen(_open_osfhandle((intptr_t)hStdoutRead, _O_TEXT), "r");
+    }
+    if (proc->pipe_stderr) {
+        CloseHandle(hStderrWrite);
+        proc->stderr_file = _fdopen(_open_osfhandle((intptr_t)hStderrRead, _O_TEXT), "r");
+    }
+    
+    return true;
+#else
+    int stdin_pipe[2] = { -1, -1 };
+    int stdout_pipe[2] = { -1, -1 };
+    int stderr_pipe[2] = { -1, -1 };
+    
+    if (proc->pipe_stdin) pipe(stdin_pipe);
+    if (proc->pipe_stdout) pipe(stdout_pipe);
+    if (proc->pipe_stderr) pipe(stderr_pipe);
+    
+    pid_t pid = fork();
+    
+    if (pid == 0) {
+        if (proc->pipe_stdin) {
+            close(stdin_pipe[1]);
+            dup2(stdin_pipe[0], STDIN_FILENO);
+        }
+        if (proc->pipe_stdout) {
+            close(stdout_pipe[0]);
+            dup2(stdout_pipe[1], STDOUT_FILENO);
+        }
+        if (proc->pipe_stderr) {
+            close(stderr_pipe[0]);
+            dup2(stderr_pipe[1], STDERR_FILENO);
+        }
+        
+        if (proc->cwd) chdir(proc->cwd);
+        
+        execvp(program, argv);
+        _exit(1);
+    } else if (pid < 0) {
+        return false;
+    }
+    
+    proc->pid = pid;
+    proc->running = true;
+    
+    if (proc->pipe_stdin) {
+        close(stdin_pipe[0]);
+        proc->stdin_file = fdopen(stdin_pipe[1], "w");
+    }
+    if (proc->pipe_stdout) {
+        close(stdout_pipe[1]);
+        proc->stdout_file = fdopen(stdout_pipe[0], "r");
+    }
+    if (proc->pipe_stderr) {
+        close(stderr_pipe[1]);
+        proc->stderr_file = fdopen(stderr_pipe[0], "r");
+    }
+    
+    return true;
+#endif
+}
+
 bool_t subprocess_wait(Process* proc, i64 timeout_ms) {
     if (!proc || !proc->running) return false;
     
@@ -298,22 +425,37 @@ i32 subprocess_call(const char* command) {
 i32 subprocess_call_with_args(const char* program, const char** args) {
     if (!program || !args) return -1;
     
-    size_t len = strlen(program) + 1;
-    for (size_t i = 0; args[i]; i++) {
-        len += strlen(args[i]) + 1;
+    /* 计算参数数量 */
+    int argc = 1;
+    for (const char** p = args; *p; p++) argc++;
+    
+    /* 构造 argv 数组 */
+    char** argv = (char**)kmm_v4_malloc((size_t)(argc + 1) * sizeof(char*));
+    if (!argv) return -1;
+    argv[0] = (char*)program;
+    for (int i = 1; i < argc; i++) {
+        argv[i] = (char*)args[i - 1];
+    }
+    argv[argc] = NULL;
+    
+    /* 使用 execvp 直接执行，不经过 shell */
+    Process* proc = subprocess_create(program);
+    if (!proc) {
+        kmm_v4_free(argv);
+        return -1;
     }
     
-    char* command = (char*)kmm_v4_malloc(len);
-    strcpy(command, program);
-    
-    for (size_t i = 0; args[i]; i++) {
-        strcat(command, " ");
-        strcat(command, args[i]);
+    if (!subprocess_start_execvp(proc, program, argv)) {
+        subprocess_destroy(proc);
+        kmm_v4_free(argv);
+        return -1;
     }
     
-    i32 result = subprocess_call(command);
-    kmm_v4_free(command);
-    return result;
+    subprocess_wait(proc, -1);
+    i32 exit_code = subprocess_exit_code(proc);
+    subprocess_destroy(proc);
+    kmm_v4_free(argv);
+    return exit_code;
 }
 
 char* subprocess_output(const char* command) {

@@ -254,6 +254,14 @@ static bool_t remove_all_recursive(const char* path) {
 #endif
                     info.name.ptr);
 
+            /* 安全：递归删除时检查子项是否为符号链接，拒绝跟随符号链接 */
+            if (fs_is_symlink(full)) {
+                /* 只删除符号链接本身，不跟随 */
+                fs_remove(full);
+                kmm_v4_free(full);
+                continue;
+            }
+
             bool_t ok = remove_all_recursive(full);
             kmm_v4_free(full);
             if (!ok) {

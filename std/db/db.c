@@ -291,10 +291,9 @@ int db_errcode(DBConnection* db) {
     return 0;
 }
 
-DBResult* db_query(DBConnection* db, const char* sql, ...) {
+DBResult* db_query(DBConnection* db, const char* sql) {
     DBResult* result;
     DBStatement* stmt;
-    va_list ap;
     int col_count;
     int row_count = 0;
     int row_cap = DB_INITIAL_CAPACITY;
@@ -302,14 +301,9 @@ DBResult* db_query(DBConnection* db, const char* sql, ...) {
     char** col_names = NULL;
     int i, j;
     DBStatus rc;
-    char* final_sql;
     if (!db || !sql) return NULL;
 
-    final_sql = string_copy(sql);
-    if (!final_sql) return NULL;
-
-    stmt = db_prepare(db, final_sql);
-    kmm_v4_free(final_sql);
+    stmt = db_prepare(db, sql);
     if (!stmt) return NULL;
 
     col_count = sqlite3_column_count(stmt->stmt);
@@ -1967,7 +1961,7 @@ int db_errcode(DBConnection* db) {
     return 0;
 }
 
-DBResult* db_query(DBConnection* db, const char* sql, ...) {
+DBResult* db_query(DBConnection* db, const char* sql) {
     DBResult* result;
     DBStatement* stmt;
     int col_count;
